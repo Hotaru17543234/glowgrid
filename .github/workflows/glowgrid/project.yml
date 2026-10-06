@@ -1,0 +1,91 @@
+name: GlowGrid
+
+options:
+  bundleIdPrefix: com.hotaru
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.1"
+    CURRENT_PROJECT_VERSION: "2"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  GlowGrid:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Shared
+    info:
+      path: App/Info.plist
+      properties:
+        # ASCII here: SideStore sends this name to Apple when registering the App ID,
+        # and Apple rejects non-ASCII names. The home screen shows "萤格" from InfoPlist.strings.
+        CFBundleDisplayName: GlowGrid
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.hotaru.glowgrid
+            CFBundleURLSchemes:
+              - glowgrid
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: App/GlowGrid.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.hotaru.glowgrid
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotaru.glowgrid
+        PRODUCT_NAME: GlowGrid
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: GlowGridWidget
+        embed: true
+
+  GlowGridWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+      - path: Shared
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: GlowGrid Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/GlowGridWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.hotaru.glowgrid
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotaru.glowgrid.widget
+        PRODUCT_NAME: GlowGridWidget
+
+schemes:
+  GlowGrid:
+    build:
+      targets:
+        GlowGrid: all
+        GlowGridWidget: all
+    run:
+      config: Debug
+    archive:
+      config: Release
