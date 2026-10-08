@@ -11,19 +11,27 @@ enum NotificationScheduler {
     static func content(for day: String, tasks: [TaskItem]) -> UNMutableNotificationContent {
         let list = tasks.on(day)
         let undone = list.filter { !$0.done }
+        let longs = tasks.longOn(day).filter { !$0.done }
         let c = UNMutableNotificationContent()
-        if list.isEmpty {
+        var lines: [String] = []
+        if list.isEmpty && longs.isEmpty {
             c.title = "早上好～今天没有安排"
-            c.body = "好好休息一下吧"
-        } else if undone.isEmpty {
+            lines.append("好好休息一下吧")
+        } else if undone.isEmpty && longs.isEmpty {
             c.title = "早上好～今天的事都提前做完啦"
-            c.body = "可以轻轻松松过一天了，真厉害"
+            lines.append("可以轻轻松松过一天了，真厉害")
         } else {
-            c.title = "早上好～今天有 \(undone.count) 件事"
-            var lines = undone.prefix(5).map { "\(DayKey.hm($0.due)) 前　\($0.title)" }
+            if undone.isEmpty {
+                c.title = "早上好～今天有 \(longs.count) 件长任务在进行"
+            } else {
+                c.title = "早上好～今天有 \(undone.count) 件事"
+            }
+            lines.append(contentsOf: undone.prefix(5).map { $0.line(on: day) })
             if undone.count > 5 { lines.append("还有 \(undone.count - 5) 件…") }
-            c.body = lines.joined(separator: "\n")
+            lines.append(contentsOf: longs.prefix(2).map { "进行中：" + $0.line(on: day) })
+            if longs.count > 2 { lines.append("还有 \(longs.count - 2) 件长任务…") }
         }
+        c.body = lines.joined(separator: "\n")
         if let h = JPHoliday.name(day) { c.subtitle = "今天是\(h)" }
         c.sound = .default
         c.threadIdentifier = "morning"

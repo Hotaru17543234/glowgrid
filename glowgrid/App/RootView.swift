@@ -6,11 +6,17 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            Palette.paper.ignoresSafeArea()
+            AppBackgroundView()
 
             VStack(spacing: 0) {
                 HeaderView()
                     .padding(.horizontal, 16)
+
+                if model.mode == .day {
+                    LongTaskStrip()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
 
                 Group {
                     if model.mode == .day {
@@ -19,7 +25,7 @@ struct RootView: View {
                         MonthGridView()
                     }
                 }
-                .background(Palette.sheet)
+                .background(Palette.sheet.opacity(model.bg.appEnabled && !model.bg.images.isEmpty ? 0.86 : 1))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -117,11 +123,16 @@ struct HeaderView: View {
 
     private var daySummary: Text {
         let list = model.dayTasks(model.selected)
+        let longs = model.longTasks(model.selected)
         var t = Text("")
         if let h = JPHoliday.name(model.selected) {
             t = t + Text(h).foregroundColor(Palette.sun).fontWeight(.semibold) + Text(" · ")
         }
         if list.isEmpty {
+            if !longs.isEmpty {
+                return t + Text("\(longs.count)").foregroundColor(Palette.ink).fontWeight(.semibold)
+                    + Text(" 件长任务进行中 · 点格子可以添加当天的事")
+            }
             return t + Text("这天还没有事项 · 点格子或右下角 + 就能添加")
         }
         let done = list.filter { $0.done }.count
@@ -130,9 +141,9 @@ struct HeaderView: View {
             + Text("\(done)").foregroundColor(Palette.ink).fontWeight(.semibold)
         if model.selected == DayKey.today() {
             let nowM = DayKey.nowMinutes()
-            if let next = list.first(where: { !$0.done && Double($0.due) > nowM }) {
+            if let next = list.first(where: { !$0.done && Double($0.due ?? $0.anchor) > nowM }) {
                 t = t + Text(" · 下一件 ")
-                    + Text("\(DayKey.hm(next.due)) 前").foregroundColor(Palette.ink).fontWeight(.semibold)
+                    + Text(next.timeLabel).foregroundColor(Palette.ink).fontWeight(.semibold)
                     + Text(" " + next.title)
             }
         }
@@ -160,15 +171,23 @@ struct HeaderView: View {
     }
 
     private var monthSummary: Text {
-        let list = model.tasks.filter { DayKey.month($0.day) == model.month }
+        let first = model.month + "-01"
+        let last = DayKey.add(DayKey.addMonths(model.month, 1) + "-01", days: -1)
+        let singles = model.tasks.filter { !$0.isLong && DayKey.month($0.day) == model.month }
+        let longs = model.tasks.filter { $0.isLong && $0.day <= last && $0.lastDay >= first }
+        let list = singles + longs
         if list.isEmpty { return Text("这个月还没有事项") }
         let done = list.filter { $0.done }.count
         let today = DayKey.today()
         let nowM = DayKey.nowMinutes()
         let overdue = list.filter { $0.isOverdue(today: today, nowMinutes: nowM) }.count
         var t = Text("本月 ")
-            + Text("\(list.count)").foregroundColor(Palette.ink).fontWeight(.semibold)
-            + Text(" 件事 · 已完成 ")
+            + Text("\(singles.count)").foregroundColor(Palette.ink).fontWeight(.semibold)
+            + Text(" 件事")
+        if !longs.isEmpty {
+            t = t + Text(" · 长任务 ") + Text("\(longs.count)").foregroundColor(Palette.ink).fontWeight(.semibold)
+        }
+        t = t + Text(" · 已完成 ")
             + Text("\(done)").foregroundColor(Palette.ink).fontWeight(.semibold)
         if overdue > 0 {
             t = t + Text(" · 过期未完成 ") + Text("\(overdue)").foregroundColor(Palette.now).fontWeight(.semibold)
@@ -259,7 +278,7 @@ struct WeekStrip: View {
                 DayChip(day: d,
                         isSelected: d == model.selected,
                         isToday: d == today,
-                        hasTasks: model.tasks.contains { $0.day == d })
+                        hasTasks: model.tasks.contains { $0.covers(d) })
                     .contentShape(Rectangle())
                     .onTapGesture { model.select(d) }
             }

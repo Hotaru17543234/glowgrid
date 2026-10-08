@@ -122,40 +122,74 @@ private struct MonthGrid: View {
         let start = DayKey.mondayOfWeek(month + "-01")
         let cellW = width / 7
         let level = MonthLayout.level(rowH)
-        let byDay = Dictionary(grouping: model.tasks, by: { $0.day })
+        let singles = model.tasks.filter { !$0.isLong }
+        let byDay = Dictionary(grouping: singles, by: { $0.day })
+        let longs = model.tasks.filter { $0.isLong }
         let today = DayKey.today()
         let nowM = DayKey.nowMinutes()
+        let laneH = MonthLayout.laneH(level)
 
         VStack(spacing: 0) {
             ForEach(0..<rows, id: \.self) { r in
-                HStack(spacing: 0) {
-                    ForEach(0..<7, id: \.self) { c in
-                        let day = DayKey.add(start, days: r * 7 + c)
-                        let list = (byDay[day] ?? []).on(day)
-                        MonthCell(day: day,
-                                  inMonth: DayKey.month(day) == month,
-                                  isToday: day == today,
-                                  isSelected: day == model.selected,
-                                  level: level,
-                                  width: cellW,
-                                  height: rowH,
-                                  tasks: list,
-                                  today: today,
-                                  nowMinutes: nowM)
-                            .overlay(alignment: .trailing) {
-                                if c < 6 { Rectangle().fill(Palette.line).frame(width: 1) }
-                            }
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(Palette.line).frame(height: 1)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture { model.openDay(day) }
+                let weekStart = DayKey.add(start, days: r * 7)
+                let segs = MonthLayout.segments(longs, weekStart: weekStart,
+                                                maxLanes: MonthLayout.maxLanes(level: level, rowH: rowH))
+                let laneCount = segs.map { $0.lane + 1 }.max() ?? 0
+                let reserved: CGFloat = laneCount > 0 ? CGFloat(laneCount) * laneH + 1 : 0
+
+                ZStack(alignment: .topLeading) {
+                    HStack(spacing: 0) {
+                        ForEach(0..<7, id: \.self) { c in
+                            let day = DayKey.add(weekStart, days: c)
+                            let list = (byDay[day] ?? []).on(day)
+                            MonthCell(day: day,
+                                      inMonth: DayKey.month(day) == month,
+                                      isToday: day == today,
+                                      isSelected: day == model.selected,
+                                      level: level,
+                                      width: cellW,
+                                      height: rowH,
+                                      reserved: reserved,
+                                      tasks: list,
+                                      today: today,
+                                      nowMinutes: nowM)
+                                .overlay(alignment: .trailing) {
+                                    if c < 6 { Rectangle().fill(Palette.line).frame(width: 1) }
+                                }
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(Palette.line).frame(height: 1)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture { model.openDay(day) }
+                        }
+                    }
+
+                    ForEach(segs) { seg in
+                        LongBar(seg: seg, level: level, cellW: cellW)
+                            .frame(width: CGFloat(seg.endCol - seg.startCol + 1) * cellW - 4, height: laneH - 2)
+                            .offset(x: CGFloat(seg.startCol) * cellW + 2,
+                                    y: 21 + CGFloat(seg.lane) * laneH)
+                            .onTapGesture { model.edit(seg.task) }
                     }
                 }
+                .frame(width: width, height: rowH, alignment: .topLeading)
             }
         }
         .frame(width: width, height: rowH * CGFloat(rows), alignment: .top)
     }
+}
+
+/// The part of a long task that falls inside one week row.
+struct LongSeg: Identifiable {
+    let task: TaskItem
+    let weekStart: String
+    let startCol: Int
+    let endCol: Int
+    let lane: Int
+    let continuesLeft: Bool
+    let continuesRight: Bool
+
+    var id: String { task.id.uuidString + weekStart }
 }
 
 enum MonthLayout {
@@ -163,6 +197,50 @@ enum MonthLayout {
 
     static func level(_ row: CGFloat) -> Int {
         row < 58 ? 0 : row < 140 ? 1 : row < 200 ? 2 : 3
+    }
+
+    /// Height of one long-task lane, including its gap.
+    static func laneH(_ level: Int) -> CGFloat {
+        switch level {
+        case 0: return 6
+        case 1: return 15
+        case 2: return 16
+        default: return 17
+        }
+    }
+
+    static func maxLanes(level: Int, rowH: CGFloat) -> Int {
+        if level == 0 { return 3 }
+        return rowH < 120 ? 2 : 3
+    }
+
+    /// Long-task bars for one week, stacked into lanes so they never overlap.
+    static func segments(_ longs: [TaskItem], weekStart: String, maxLanes: Int) -> [LongSeg] {
+        let weekEnd = DayKey.add(weekStart, days: 6)
+        let overlapping = longs
+            .filter { $0.day <= weekEnd && $0.lastDay >= weekStart }
+            .sorted { a, b in a.day != b.day ? a.day < b.day : a.lastDay > b.lastDay }
+        var laneEnds: [Int] = []
+        var out: [LongSeg] = []
+        for t in overlapping {
+            let s = max(0, DayKey.days(from: weekStart, to: t.day))
+            let e = min(6, DayKey.days(from: weekStart, to: t.lastDay))
+            var lane = -1
+            for (i, end) in laneEnds.enumerated() where end < s {
+                lane = i
+                break
+            }
+            if lane < 0 {
+                lane = laneEnds.count
+                laneEnds.append(e)
+            } else {
+                laneEnds[lane] = e
+            }
+            if lane >= maxLanes { continue }
+            out.append(LongSeg(task: t, weekStart: weekStart, startCol: s, endCol: e, lane: lane,
+                               continuesLeft: t.day < weekStart, continuesRight: t.lastDay > weekEnd))
+        }
+        return out
     }
 
     /// Rough text width: CJK counts as 1, Latin letters and digits as about half.
@@ -181,15 +259,16 @@ enum MonthLayout {
             return 4 + min(2, max(1, ceil(units(t.title) / perLine))) * 12
         default:
             let perLine = max(1, floor((cellW - 10) / 11))
-            return 5 + 12 + min(3, max(1, ceil(units(t.title) / perLine))) * 13
+            let timeLine: CGFloat = t.shortTimeLabel.isEmpty ? 0 : 12
+            return 5 + timeLine + min(3, max(1, ceil(units(t.title) / perLine))) * 13
         }
     }
 
     /// Which chips fit in a cell; the rest become "+N".
-    static func fit(_ list: [TaskItem], level: Int, cellW: CGFloat, rowH: CGFloat, holiday: Bool)
+    static func fit(_ list: [TaskItem], level: Int, cellW: CGFloat, rowH: CGFloat, holiday: Bool, reserved: CGFloat)
         -> (shown: [TaskItem], hidden: Int) {
         let avail = rowH - 1 - 3 - 16 - 2 - 2
-        var used: CGFloat = holiday ? 13 : 0
+        var used: CGFloat = reserved + (holiday ? 13 : 0)
         var shown: [TaskItem] = []
         for t in list {
             let h = chipHeight(t, level: level, cellW: cellW)
@@ -217,6 +296,7 @@ private struct MonthCell: View {
     let level: Int
     let width: CGFloat
     let height: CGFloat
+    let reserved: CGFloat
     let tasks: [TaskItem]
     let today: String
     let nowMinutes: Double
@@ -224,7 +304,8 @@ private struct MonthCell: View {
     var body: some View {
         let holiday = JPHoliday.name(day)
         let wd = DayKey.weekday(day)
-        let fit = MonthLayout.fit(tasks, level: level, cellW: width, rowH: height, holiday: holiday != nil)
+        let fit = MonthLayout.fit(tasks, level: level, cellW: width, rowH: height,
+                                  holiday: holiday != nil, reserved: reserved)
         let numberColor: Color = isToday ? Palette.glowInk
             : (holiday != nil || wd == 1) ? Palette.sun
             : wd == 7 ? Palette.sat : Palette.ink
@@ -246,6 +327,10 @@ private struct MonthCell: View {
                 }
             }
             .frame(height: 16)
+
+            if reserved > 2 {
+                Color.clear.frame(height: reserved - 2)
+            }
 
             if let h = holiday {
                 Text(JPHoliday.shortName(h))
@@ -279,7 +364,7 @@ private struct MonthCell: View {
         .padding(.bottom, 2)
         .opacity(inMonth ? 1 : 0.42)
         .frame(width: width, height: height, alignment: .top)
-        .background(inMonth ? Color.clear : Palette.paper)
+        .background(inMonth ? Color.clear : Palette.paper.opacity(0.6))
         .overlay {
             if isSelected {
                 Rectangle().inset(by: 1).stroke(Palette.accent, lineWidth: 2)
@@ -320,9 +405,13 @@ private struct MonthChip: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             default:
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(DayKey.hm(task.due))
-                        .font(.rounded(10, .semibold))
-                        .monospacedDigit()
+                    if !task.shortTimeLabel.isEmpty {
+                        Text(task.shortTimeLabel)
+                            .font(.rounded(10, .semibold))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
                     Text(task.title)
                         .font(.system(size: 11))
                         .lineLimit(3)
@@ -336,13 +425,68 @@ private struct MonthChip: View {
         .strikethrough(task.done)
         .foregroundStyle(Palette.ink)
         .frame(height: height)
-        .background(level == 0 ? nil : RoundedRectangle(cornerRadius: 4).fill(task.color.chip))
+        .background {
+            if level > 0 {
+                ZStack {
+                    task.color.chip
+                    PatternOverlay(pattern: task.pattern, color: task.color)
+                }
+            }
+        }
         .overlay {
-            if overdue && level > 0 {
-                RoundedRectangle(cornerRadius: 4).stroke(Palette.now, lineWidth: 1)
+            if level > 0 {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(overdue ? Palette.now : task.color.border, lineWidth: overdue ? 1 : 0.8)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: level == 0 ? 2 : 4))
         .opacity(task.done ? 0.45 : 1)
+    }
+}
+
+/// A long task drawn across the days it covers, with a dot under each day checked in.
+private struct LongBar: View {
+    let seg: LongSeg
+    let level: Int
+    let cellW: CGFloat
+
+    var body: some View {
+        let t = seg.task
+        let left: CGFloat = seg.continuesLeft ? 0 : 4
+        let right: CGFloat = seg.continuesRight ? 0 : 4
+        let shape = UnevenRoundedRectangle(topLeadingRadius: left, bottomLeadingRadius: left,
+                                           bottomTrailingRadius: right, topTrailingRadius: right,
+                                           style: .continuous)
+        ZStack(alignment: .leading) {
+            if level == 0 {
+                shape.fill(t.color.color)
+            } else {
+                shape.fill(t.color.chip)
+                PatternOverlay(pattern: t.pattern, color: t.color)
+                    .clipShape(shape)
+                Canvas { ctx, size in
+                    for c in seg.startCol...seg.endCol {
+                        let d = DayKey.add(seg.weekStart, days: c)
+                        guard t.isCheckedIn(d) else { continue }
+                        let cx = (CGFloat(c - seg.startCol) + 0.5) * cellW - 2
+                        let r: CGFloat = 2
+                        ctx.fill(Path(ellipseIn: CGRect(x: cx - r, y: size.height - 2 * r - 1, width: 2 * r, height: 2 * r)),
+                                 with: .color(t.color.border))
+                    }
+                }
+                Text(seg.continuesLeft ? "… " + t.title : t.title)
+                    .font(.system(size: level >= 2 ? 10 : 9.5, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                    .padding(.leading, 4)
+                    .padding(.trailing, 2)
+            }
+        }
+        .overlay {
+            if level > 0 {
+                shape.stroke(t.color.border, lineWidth: 0.8)
+            }
+        }
+        .opacity(t.done ? 0.45 : 1)
     }
 }

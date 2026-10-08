@@ -33,6 +33,11 @@ enum DayKey {
 
     static func today() -> String { key(Date()) }
 
+    /// Whole days from `a` to `b` (negative when b is earlier).
+    static func days(from a: String, to b: String) -> Int {
+        cal.dateComponents([.day], from: date(a), to: date(b)).day ?? 0
+    }
+
     /// 1 = Sunday ... 7 = Saturday
     static func weekday(_ k: String) -> Int { cal.component(.weekday, from: date(k)) }
 

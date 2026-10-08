@@ -25,12 +25,26 @@ enum TaskStore {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    /// Flip one task's done state. Used by the widget button.
+    /// Flip a task's done state.
     @discardableResult
     static func toggle(_ id: UUID) -> TaskItem? {
         var all = load()
         guard let i = all.firstIndex(where: { $0.id == id }) else { return nil }
         all[i].done.toggle()
+        save(all)
+        return all[i]
+    }
+
+    /// Flip a long task's check-in for one day.
+    @discardableResult
+    static func toggleCheckin(_ id: UUID, day: String) -> TaskItem? {
+        var all = load()
+        guard let i = all.firstIndex(where: { $0.id == id }) else { return nil }
+        if let j = all[i].checkins.firstIndex(of: day) {
+            all[i].checkins.remove(at: j)
+        } else {
+            all[i].checkins.append(day)
+        }
         save(all)
         return all[i]
     }

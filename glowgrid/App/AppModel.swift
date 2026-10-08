@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 import WidgetKit
 
@@ -34,6 +35,7 @@ struct ZoomCommand: Equatable {
 final class AppModel: ObservableObject {
     // Data
     @Published var tasks: [TaskItem] = []
+    @Published var bg: BGSettings = BackgroundStore.load()
 
     // Navigation
     @Published var mode: ViewMode {
@@ -142,7 +144,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - Data
 
+    /// Single-day tasks of a day.
     func dayTasks(_ day: String) -> [TaskItem] { tasks.on(day) }
+
+    /// Long tasks running on a day.
+    func longTasks(_ day: String) -> [TaskItem] { tasks.longOn(day) }
 
     private func commit() {
         TaskStore.save(tasks)
@@ -158,13 +164,14 @@ final class AppModel: ObservableObject {
         }
         commit()
         if mode == .day {
-            if item.day != selected { selected = item.day }
+            if !item.covers(selected) { selected = item.day }
             scrollRequest = UUID()
         } else {
             selected = item.day
             month = DayKey.month(item.day)
         }
-        showToast(isNew ? "已添加：\(DayKey.hm(item.due)) 前 \(item.title)" : "已保存修改")
+        let what = item.isLong ? "\(DayKey.md(item.day))～\(DayKey.md(item.lastDay))" : item.timeLabel
+        showToast(isNew ? "已添加：\(what) \(item.title)" : "已保存修改")
     }
 
     func delete(_ id: UUID) {
@@ -173,6 +180,7 @@ final class AppModel: ObservableObject {
         showToast("已删除")
     }
 
+    /// Complete / un-complete a whole task.
     func toggle(_ id: UUID, at point: CGPoint?) {
         guard let i = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[i].done.toggle()
@@ -185,19 +193,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Check in / out a long task for one day.
+    func toggleCheckin(_ id: UUID, day: String, at point: CGPoint?) {
+        guard let i = tasks.firstIndex(where: { $0.id == id }) else { return }
+        if let j = tasks[i].checkins.firstIndex(of: day) {
+            tasks[i].checkins.remove(at: j)
+            commit()
+            showToast("已取消这天的打卡")
+            return
+        }
+        tasks[i].checkins.append(day)
+        let t = tasks[i]
+        commit()
+        let idx = t.dayIndex(day), total = t.totalDays
+        let msg = pick(Cheer.checkin)
+            .replacingOccurrences(of: "{i}", with: "\(idx)")
+            .replacingOccurrences(of: "{n}", with: "\(total)")
+        showToast(msg, sub: "\(t.title) · 已打卡 \(t.checkins.count) / \(total) 天", seconds: 2.8)
+        successTick += 1
+        burst(at: point, count: 9)
+    }
+
     // MARK: - Cheering
 
     private func cheer(for t: TaskItem, at point: CGPoint?) {
+        let today = DayKey.today()
+        if t.isLong {
+            showToast("长任务「\(t.title)」整件完成！太了不起了", sub: "一共打卡 \(t.checkins.count) / \(t.totalDays) 天", seconds: 3.4)
+            successTick += 1
+            burst(at: point, count: 22)
+            return
+        }
         let list = dayTasks(t.day)
         let total = list.count
         let doneCount = list.filter { $0.done }.count
-        let today = DayKey.today()
         let nowM = DayKey.nowMinutes()
         let hour = DayKey.cal.component(.hour, from: Date())
         let dWord = t.day == today ? "今天" : "这天"
         let allDone = total >= 2 && doneCount == total
-        let late = t.day < today || (t.day == today && Double(t.due) < nowM)
-        let early = t.day > today || (t.day == today && Double(t.due) - nowM >= 60)
+        var late = t.day < today
+        var early = t.day > today
+        if let due = t.due, t.day == today {
+            late = Double(due) < nowM
+            early = Double(due) - nowM >= 60
+        }
 
         let pool: [String]
         if allDone {
@@ -218,14 +257,16 @@ final class AppModel: ObservableObject {
             .replacingOccurrences(of: "{d}", with: dWord)
         showToast(msg, sub: "\(dWord)已完成 \(doneCount) / \(total)", seconds: allDone ? 3.4 : 2.6)
         successTick += 1
+        burst(at: point, count: allDone ? 22 : 9)
+    }
 
-        if let p = point {
-            let burst = SparkBurst(point: p, count: allDone ? 22 : 9)
-            bursts.append(burst)
-            Task {
-                try? await Task.sleep(for: .seconds(1.8))
-                self.bursts.removeAll { $0.id == burst.id }
-            }
+    private func burst(at point: CGPoint?, count: Int) {
+        guard let p = point else { return }
+        let b = SparkBurst(point: p, count: count)
+        bursts.append(b)
+        Task {
+            try? await Task.sleep(for: .seconds(1.8))
+            self.bursts.removeAll { $0.id == b.id }
         }
     }
 
@@ -249,6 +290,55 @@ final class AppModel: ObservableObject {
             }
         }
     }
+
+    // MARK: - Backgrounds
+
+    func saveBG() {
+        BackgroundStore.save(bg)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func addBackgrounds(_ datas: [Data]) async {
+        let made: [BGImage] = await Task.detached(priority: .userInitiated) {
+            datas.compactMap { ImageTools.importPicture($0) }
+        }.value
+        guard !made.isEmpty else {
+            showToast("这张图片读不出来，换一张试试吧")
+            return
+        }
+        bg.images.append(contentsOf: made)
+        saveBG()
+        showToast("已添加 \(made.count) 张背景")
+    }
+
+    func deleteBackground(_ id: String) {
+        bg.images.removeAll { $0.id == id }
+        BackgroundStore.delete(id)
+        saveBG()
+    }
+
+    func moveBackground(_ id: String, by delta: Int) {
+        guard let i = bg.images.firstIndex(where: { $0.id == id }) else { return }
+        let j = i + delta
+        guard j >= 0 && j < bg.images.count else { return }
+        bg.images.swapAt(i, j)
+        saveBG()
+    }
+
+    func updateCrop(_ id: String, target: BGTarget, crop: CGRect) async {
+        guard let i = bg.images.firstIndex(where: { $0.id == id }) else { return }
+        bg.images[i].crops[target.rawValue] = crop
+        await Task.detached(priority: .userInitiated) {
+            if let original = UIImage(contentsOfFile: BackgroundStore.originalURL(id).path) {
+                ImageTools.writeTarget(id: id, original: original, crop: crop, target: target)
+            }
+        }.value
+        bgVersion += 1
+        saveBG()
+    }
+
+    /// Bumped when a background file is re-rendered, so views reload the picture.
+    @Published var bgVersion = 0
 
     // MARK: - Navigation
 

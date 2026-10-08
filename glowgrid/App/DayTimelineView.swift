@@ -95,7 +95,7 @@ struct DayTimelineView: View {
             minutes = DayKey.nowMinutes()
         } else {
             let list = model.dayTasks(model.selected)
-            let first = list.map { $0.start ?? max(0, $0.due - 60) }.min() ?? 8 * 60
+            let first = list.map { $0.start ?? max(0, ($0.due ?? 8 * 60) - 60) }.min() ?? 8 * 60
             minutes = Double(first)
             frac = 0.15
         }
@@ -140,11 +140,11 @@ private struct DayContent: View {
                               onEdit: { model.edit(p.task) })
                     .frame(width: max(10, colW - 4), height: p.bottom - p.top)
                     .offset(x: x, y: p.top)
-                if p.kind == .flag {
+                if p.kind == .flag, let due = p.task.due {
                     Rectangle()
-                        .fill(p.task.color.color)
+                        .fill(p.task.color.border)
                         .frame(width: max(10, colW - 4), height: 2)
-                        .offset(x: x, y: pad + CGFloat(p.task.due) / 60 * hourHeight - 1)
+                        .offset(x: x, y: pad + CGFloat(due) / 60 * hourHeight - 1)
                         .allowsHitTesting(false)
                 }
             }
@@ -171,12 +171,20 @@ private struct DayContent: View {
     private func layout(_ list: [TaskItem], H: CGFloat, pad: CGFloat) -> [Placed] {
         let flagH: CGFloat = H < 30 ? 22 : 30
         var items: [Placed] = list.map { t in
-            let yDue = pad + CGFloat(t.due) / 60 * H
-            if let s = t.start {
-                let yStart = pad + CGFloat(s) / 60 * H
-                return Placed(task: t, kind: .block, top: yStart, bottom: max(yDue, yStart + flagH))
+            switch t.mode {
+            case .range:
+                let yStart = pad + CGFloat(t.start ?? 0) / 60 * H
+                let yEnd = pad + CGFloat(t.due ?? 0) / 60 * H
+                return Placed(task: t, kind: .block, top: yStart, bottom: max(yEnd, yStart + flagH))
+            case .start:
+                // Hangs below its start line with a fading tail, because the end is open.
+                let yStart = pad + CGFloat(t.start ?? 0) / 60 * H
+                let tail = max(flagH + 10, H * 0.9)
+                return Placed(task: t, kind: .start, top: yStart, bottom: yStart + tail)
+            default:
+                let yDue = pad + CGFloat(t.due ?? 0) / 60 * H
+                return Placed(task: t, kind: .flag, top: max(0, yDue - flagH), bottom: max(yDue, flagH))
             }
-            return Placed(task: t, kind: .flag, top: max(0, yDue - flagH), bottom: max(yDue, flagH))
         }
         items.sort { a, b in a.top != b.top ? a.top < b.top : a.bottom < b.bottom }
 
@@ -306,7 +314,10 @@ struct NowLine: View {
     }
 }
 
-/// One task in the day grid: a flag sitting on its deadline, or a block from start to deadline.
+/// One task in the day grid. Three looks, one per kind of time:
+/// - deadline: a flag sitting on its deadline line
+/// - start only: hangs below its start line and fades out (the end is open)
+/// - time range: a solid block from start to end
 struct TaskBlockView: View {
     let task: TaskItem
     let kind: TaskShapeKind
@@ -316,17 +327,48 @@ struct TaskBlockView: View {
     let onToggle: (CGPoint) -> Void
     let onEdit: () -> Void
 
+    private var rowH: CGFloat { compact ? 22 : 30 }
     private var tall: Bool { kind == .block && height >= 52 }
 
     private var shape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 10,
-                               bottomLeadingRadius: kind == .flag ? 3 : 10,
-                               bottomTrailingRadius: 10,
-                               topTrailingRadius: 10,
-                               style: .continuous)
+        switch kind {
+        case .flag:
+            return UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 3,
+                                          bottomTrailingRadius: 10, topTrailingRadius: 10, style: .continuous)
+        case .start:
+            return UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 0,
+                                          bottomTrailingRadius: 0, topTrailingRadius: 10, style: .continuous)
+        case .block:
+            return UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10,
+                                          bottomTrailingRadius: 10, topTrailingRadius: 10, style: .continuous)
+        }
+    }
+
+    private var timeText: String {
+        switch kind {
+        case .flag: return "\(DayKey.hm(task.due ?? 0)) 前"
+        case .start: return "\(DayKey.hm(task.start ?? 0)) 起"
+        case .block: return "\(DayKey.hm(task.start ?? 0))–\(DayKey.hm(task.due ?? 0))"
+        }
     }
 
     var body: some View {
+        content
+            .padding(.leading, 4)
+            .padding(.trailing, compact ? 6 : 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                   alignment: (tall || kind == .start) ? .topLeading : .leading)
+            .background(fillLayer)
+            .overlay(borderLayer)
+            .clipShape(shape)
+            .opacity(task.done ? 0.62 : 1)
+            .contentShape(shape)
+            .onTapGesture { onEdit() }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(timeText) \(task.title)\(task.done ? "，已完成" : "")")
+    }
+
+    private var content: some View {
         HStack(alignment: tall ? .top : .center, spacing: 6) {
             CheckCircle(done: task.done, size: compact ? 13 : 17)
                 .frame(width: compact ? 20 : 26, height: compact ? 20 : 26)
@@ -341,8 +383,8 @@ struct TaskBlockView: View {
                         .font(.system(size: 14))
                         .strikethrough(task.done)
                         .foregroundStyle(task.done ? Palette.muted : Palette.ink)
-                        .lineLimit(2)
-                    Text("\(DayKey.hm(task.start ?? task.due)) → \(DayKey.hm(task.due)) 前")
+                        .lineLimit(3)
+                    Text("\(DayKey.hm(task.start ?? 0)) → \(DayKey.hm(task.due ?? 0))")
                         .font(.rounded(12, .medium))
                         .monospacedDigit()
                         .foregroundStyle(Palette.muted)
@@ -350,7 +392,7 @@ struct TaskBlockView: View {
                 .padding(.top, 3)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(DayKey.hm(task.due)) 前")
+                    Text(timeText)
                         .font(.rounded(compact ? 12 : 13, .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Palette.ink)
@@ -370,26 +412,45 @@ struct TaskBlockView: View {
                     .fixedSize()
             }
         }
-        .padding(.leading, 4)
-        .padding(.trailing, compact ? 6 : 8)
+        .frame(height: kind == .start ? rowH : nil)
         .padding(.top, tall ? 2 : 0)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: tall ? .topLeading : .leading)
-        .background(shape.fill(task.color.tint))
-        .overlay(
-            shape.stroke(overdue ? Palette.now : task.color.color,
-                         style: StrokeStyle(lineWidth: 1, dash: overdue ? [4, 3] : []))
-        )
-        .clipShape(shape)
-        .opacity(task.done ? 0.62 : 1)
-        .contentShape(shape)
-        .onTapGesture { onEdit() }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(DayKey.hm(task.due)) 前 \(task.title)\(task.done ? "，已完成" : "")")
+    }
+
+    @ViewBuilder
+    private var fillLayer: some View {
+        if kind == .start {
+            ZStack(alignment: .top) {
+                LinearGradient(colors: [task.color.tint, task.color.tint.opacity(0)],
+                               startPoint: .top, endPoint: .bottom)
+                PatternOverlay(pattern: task.pattern, color: task.color)
+                    .frame(height: rowH)
+                Rectangle()
+                    .fill(task.color.border)
+                    .frame(height: 2)
+            }
+        } else {
+            ZStack {
+                task.color.tint
+                PatternOverlay(pattern: task.pattern, color: task.color)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var borderLayer: some View {
+        if kind == .start {
+            shape.stroke(LinearGradient(colors: [task.color.border, task.color.border.opacity(0)],
+                                        startPoint: .top, endPoint: .bottom),
+                         lineWidth: 1)
+        } else {
+            shape.stroke(overdue ? Palette.now : task.color.border,
+                         style: StrokeStyle(lineWidth: 1.2, dash: overdue ? [4, 3] : []))
+        }
     }
 }
 
-/// A task with only a deadline is a flag; with a start time it is a block.
-enum TaskShapeKind { case flag, block }
+/// Deadline only = flag, start only = open-ended marker, start + end = block.
+enum TaskShapeKind { case flag, start, block }
 
 struct CheckCircle: View {
     let done: Bool

@@ -53,7 +53,20 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Text("在主屏幕空白处长按 → 点左上角「编辑」→「添加小组件」→ 搜索「萤格」，选中号。点小组件里的小圆圈，就能直接完成事项。")
+                    NavigationLink {
+                        BackgroundSettingsView()
+                            .environmentObject(model)
+                    } label: {
+                        LabeledContent("背景图片", value: model.bg.images.isEmpty ? "未设置" : "\(model.bg.images.count) 张")
+                    }
+                } header: {
+                    Text("外观")
+                } footer: {
+                    Text("可以给 App 和小组件放自己喜欢的图片，几张图会定时轮换。")
+                }
+
+                Section {
+                    Text("在主屏幕空白处长按 → 点左上角「编辑」→「添加小组件」→ 搜索「萤格」，有中号和大号两种。点小组件里的小圆圈会先问你「确认？」，再点一次才算完成，防止误触；事情多的时候点右边的 ▲▼ 翻页。")
                         .font(.footnote)
                         .foregroundStyle(Palette.muted)
                     if !AppGroup.isShared {
