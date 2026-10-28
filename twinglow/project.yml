@@ -1,0 +1,60 @@
+name: TwinGlow
+
+options:
+  bundleIdPrefix: com.hotaru
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  TwinGlow:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    info:
+      path: App/Info.plist
+      properties:
+        # ASCII here: SideStore sends this name to Apple when registering the App ID,
+        # and Apple rejects non-ASCII names. The home screen shows "双萤" from InfoPlist.strings.
+        CFBundleDisplayName: TwinGlow
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        ITSAppUsesNonExemptEncryption: false
+        # Web pages can ask for these; without the keys iOS would close the app instead of asking.
+        NSCameraUsageDescription: "网页里拍照上传时需要用到相机。"
+        NSMicrophoneUsageDescription: "网页里用语音输入时需要用到麦克风。"
+        NSPhotoLibraryAddUsageDescription: "把网页里的图片存进相册时需要这个权限。"
+        NSLocationWhenInUseUsageDescription: "网页想知道你的大致位置时需要这个权限。"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotaru.twinglow
+        PRODUCT_NAME: TwinGlow
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+schemes:
+  TwinGlow:
+    build:
+      targets:
+        TwinGlow: all
+    run:
+      config: Debug
+    archive:
+      config: Release

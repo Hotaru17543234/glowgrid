@@ -3,6 +3,10 @@ name: Build IPA
 on:
   push:
     branches: [main]
+    # Only rebuild 萤格 when its own files change (双萤 has its own workflow).
+    paths:
+      - "glowgrid/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
